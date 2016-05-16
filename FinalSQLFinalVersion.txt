@@ -1,0 +1,302 @@
+Final SQLs
+CS 4400 Group #41
+
+Avery Dingler
+Savannah OConnor
+Visnu Premsankar
+Michael Beyroutti
+
+LOGIN:
+
+	SELECT * FROM User WHERE Username=username AND Password=password
+
+REGISTER:
+
+	//check if user exists
+	SELECT * FROM User WHERE Username=$Username
+	INSERT INTO User (Username, Password) VALUES (username, password)
+
+CREATE PROFILE:
+
+	INSERT INTO StudentFaculty (Username, Name, DOB, Gender, IsDebarred, Email, Address, IsFaculty, Penalty, Dept) VALUES ($Username, $Name, $DOB, $Gender, $IsDebarred, $Email, $Address, $IsFaculty, $Penalty, $Dept);
+
+SEARCH BOOKS:
+
+	a - by isbn
+
+		SELECT Book.ISBN, Book.Title, Book.Edition, COUNT(BookCopy.ISBN) as CopiesAvailable, Book.IsBookOnReserve
+		FROM Book, BookCopy
+		WHERE Book.ISBN = BookCopy.ISBN AND Book.ISBN = '$isbn' and BookCopy.IsOnHold = 0 and BookCopy.IsCheckedOut = 0 AND BookCopy.IsDamaged = 0
+		GROUP BY ISBN
+
+	b - by title
+
+		SELECT Book.ISBN, Book.Title, Book.Edition, COUNT(BookCopy.ISBN) as CopiesAvailable, Book.IsBookOnReserve
+		FROM Book, BookCopy
+		WHERE Book.ISBN = BookCopy.ISBN AND Book.Title LIKE '%Physics%' and BookCopy.IsOnHold = 0 and BookCopy.IsCheckedOut = 0 AND BookCopy.IsDamaged = 0
+		GROUP BY ISBN
+
+	c - by author
+
+		SELECT Book.ISBN, Book.Title, Book.Edition, COUNT(Distinct BookCopy.CopyNum) as CopiesAvailable, Book.IsBookOnReserve
+		FROM Book NATURAL JOIN BookCopy NATURAL JOIN Author
+		WHERE Book.ISBN = BookCopy.ISBN AND Book.ISBN AND Author.ISBN = Book.ISBN AND Author.Authors LIKE '%Teague%' and BookCopy.IsOnHold = 0 and BookCopy.IsCheckedOut = 0 AND BookCopy.IsDamaged = 0
+		GROUP BY ISBN
+
+HOLD REQUEST:
+	//we might need to add more constraints
+	//view the google doc for holdrequests and look over
+
+	a - Check if debarred
+
+		SELECT IsDebarred FROM StudentFaculty WHERE Username = '$username'
+
+	//See if user already has this isbn on hold
+
+		SELECT UserName
+		FROM Issues
+		WHERE Issues.ISBN = '2857398145091' AND Issues.UserName = 'rango' AND Issues.DateOfIssue > ADDDATE(CURDATE(), -3)
+		LIMIT 1
+
+	b- Grabs lowest copy number available
+
+		SELECT ISBN, MIN(CopyNum) FROM BookCopy WHERE ISBN = '1009489278713' and IsCheckedOut = 0 AND IsOnHold = 0 AND IsDamaged = 0;
+
+	c - Update BookCopy tuple with ISBN and CopyNum from part b
+
+		UPDATE BookCopy SET IsOnHold = 1 WHERE ISBN = '$isbn' AND CopyNum = '$copyNum';
+
+	d - Insert into Issue table
+	//this is randonly generating and IssueID that starts with 'H'
+
+		INSERT INTO Issues (IssueID, UserName, ISBN, CopyNum, DateOfIssue, ExtensionDate)
+		VALUES (CONCAT('H', FLOOR(100000 + (RAND() * 999999))), $UserName, $ISBN, $CopyNum, CURDATE(), CURDATE())
+
+	e - Grab IssueID so we can display it. ISBN is the same ISBN 
+	
+		SELECT IssueID FROM Issues
+		WHERE UserName = '$Username' AND DateOfIssue = DATE(CURDATE()) AND ISBN = '$isbn' AND IssueID LIKE 'H%'
+		LIMIT 1
+
+REQUEST EXTENSION ON A BOOK:
+	//have to make sure future requestor is null
+
+	a - Check if debarred and grab IsFaculty
+
+		SELECT IsDebarred, IsFaculty FROM StudentFaculty WHERE Username = '$username'
+
+
+	b - Grab applicable Issue tuple
+
+	//first SQL is for student, second is for faculty
+
+		SELECT UserName, ISBN, CopyNum, IssueID, DateOfIssue, CountOfExtension, ExtensionDate, LEAST(DATE_ADD(Issues.ExtensionDate, INTERVAL 14 DAY), (DATE_ADD(Issues.DateOfIssue, INTERVAL 28 DAY))) as ExpectedReturnDate, CURDATE() as Date,
+		LEAST(DATE_ADD(CURDATE(), INTERVAL 14 DAY), (DATE_ADD(Issues.DateOfIssue, INTERVAL 28 DAY))) as NewReturnDate
+		FROM Issues
+		WHERE IssueID = '$issueID'
+
+		SELECT UserName, ISBN, CopyNum, IssueID, DateOfIssue, CountOfExtension, ExtensionDate, LEAST(DATE_ADD(Issues.ExtensionDate, INTERVAL 14 DAY), (DATE_ADD(Issues.DateOfIssue, INTERVAL 56 DAY))) as ExpectedReturnDate, CURDATE() as Date,
+		LEAST(DATE_ADD(CURDATE(), INTERVAL 14 DAY), (DATE_ADD(Issues.DateOfIssue, INTERVAL 56 DAY))) as NewReturnDate
+		FROM Issues
+		WHERE IssueID = '$issueID'
+
+	c - Make sure no other student has requested a future extension
+	//values of isbn and CopyNum are from part b
+	//if another user requested a future extension you cannot request the extension
+
+		SELECT FutureRequestor
+		FROM BookCopy
+		WHERE ISBN = $isbn AND CopyNum = $CopyNum
+
+	//User can request the extension as long as the 'ExpectedReturnDate' from part B has not been reached and NO of Extensions is valid
+
+	d - Request the extension
+	//Code will calculate the expected return date(due date) and determine if user is allowed to place the extension
+
+		UPDATE Issues SET ExtensionDate = CURDATE(), CountOfExtension = CountOfExtension + 1
+		WHERE IssueID = '$issueID'
+
+FUTURE HOLD REQUEST ON A BOOK:
+	a - is user debarred?
+
+		SELECT IsDebarred FROM StudentFaculty WHERE Username = '$username'
+
+	b - is book on reserve?
+
+		SELECT IsBookOnReserve FROM Book WHERE ISBN = '$isbn'
+
+	c - Grab relevent tuples from Issues (also gives the expected return dates)
+	//first sql grabs info for students
+
+		SELECT StudentFaculty.Username, StudentFaculty.IsFaculty, Issues.DateOfIssue, Issues.ExtensionDate, Issues.CopyNum, LEAST(DATE_ADD(Issues.ExtensionDate, INTERVAL 14 DAY), (DATE_ADD(Issues.DateOfIssue, INTERVAL 28 DAY))) as ExpectedReturnDate
+		FROM Issues, StudentFaculty, BookCopy
+		WHERE Issues.ISBN = '$isbn' and Issues.ReturnDate is NULL AND Issues.UserName = StudentFaculty.Username AND StudentFaculty.IsFaculty = 0 AND BookCopy.ISBN = Issues.ISBN and BookCopy.CopyNum = Issues.CopyNum and BookCopy.FutureRequestor is NULL
+		ORDER BY ExpectedReturnDate ASC
+		LIMIT 1
+
+	//second sql grabs info for faculty
+
+		SELECT StudentFaculty.Username, StudentFaculty.IsFaculty, Issues.DateOfIssue, Issues.ExtensionDate, Issues.CopyNum, LEAST(DATE_ADD(Issues.ExtensionDate, INTERVAL 14 DAY), (DATE_ADD(Issues.DateOfIssue, INTERVAL 56 DAY))) as ExpectedReturnDate
+		FROM Issues, StudentFaculty, BookCopy
+		WHERE Issues.ISBN = '$isbn' and Issues.ReturnDate is NULL AND Issues.UserName = StudentFaculty.Username AND StudentFaculty.IsFaculty = 1 AND BookCopy.ISBN = Issues.ISBN and BookCopy.CopyNum = Issues.CopyNum and BookCopy.FutureRequestor is NULL
+		ORDER BY ExpectedReturnDate ASC
+		LIMIT 1
+
+	d - Update book copy
+	//$isbn and $copynum are grabbed from the SQL in part C of Future Hold Request
+
+		UPDATE BookCopy SET FutureRequestor = '$Username' WHERE ISBN = '$isbn' AND CopyNum = $copyNum
+
+
+TRACK LOCATION:
+
+	SELECT Book.ShelfNum, Book.Subject, Shelf.FloorNum, Shelf.AisleNum
+	FROM Book, Shelf
+	WHERE Book.ISBN =  '$isbn'
+	AND Book.ShelfNum = Shelf.ShelfNum;
+
+CHECKOUT A BOOK:
+
+	//check if user is debarred
+
+		SELECT IsDebarred FROM StudentFaculty WHERE Username = '$username'
+
+	//the code is also grabbing the username and displaying it
+
+		SELECT DATEDIFF(CURDATE() , DateOfIssue) AS DaysSinceHoldRequest, Issues.ISBN,
+		Issues.CopyNum, (DATE_ADD(CURDATE() , INTERVAL 14 DAY)) AS ExpectedReturnDate, CURDATE() AS CheckoutDate, UserName
+		FROM Issues
+		WHERE IssueID =  'H881080'
+
+	//if DaysSinceHoldRequest is > 3 the book must be placed on hold again or future requested (throw error).
+
+	//when 'Confirm' is pressed run the following TWO SQL statents
+
+		UPDATE BookCopy,
+		Issues SET BookCopy.IsCheckedOut =1,
+		BookCopy.IsOnHold =0 WHERE BookCopy.isbn = Issues.isbn AND Issues.IssueID =  '$issueId' AND Issues.CopyNum = BookCopy.CopyNum
+
+		//The values here are grabbed from the second SQL that ran for Book Checkout
+
+		INSERT INTO Issues (IssueID, UserName, ISBN, CopyNum, DateOfIssue, ExtensionDate)
+		VALUES (CONCAT('C', FLOOR(100000 + (RAND() * 999999))), $UserName, $ISBN, $CopyNum, CURDATE(), CURDATE())
+
+	//Grab the IssueID
+
+		SELECT IssueID FROM Issues
+		WHERE UserName = '$Username' AND DateOfIssue = DATE(CURDATE()) AND ISBN = '$isbn' AND CopyNum = $Copynum AND IssueID LIKE 'C%'
+		LIMIT 1
+
+RETURN BOOK:
+
+	//see if user is a student or faculty
+
+		SELECT IsFaculty FROM StudentFaculty WHERE Username = '$username'
+
+	//get info about book. this gives us how many days late it is (if is >0 it's late)
+	//The first SQL gets the days late if the user is a student
+	//The second SQL gets the days late if the user is faculty
+
+		SELECT Issues.ISBN, Issues.CopyNum, Book.Cost,
+		DATEDIFF(CURDATE(), LEAST(DATE_ADD(Issues.ExtensionDate, INTERVAL 14 DAY), (DATE_ADD(Issues.DateOfIssue, INTERVAL 28 DAY)))) as DaysLate
+		FROM Issues, Book
+		WHERE Issues.IssueID = '$issueId' AND Book.ISBN = Issues.ISBN
+
+		SELECT Issues.ISBN, Issues.CopyNum, Book.Cost,
+		DATEDIFF(CURDATE(), LEAST(DATE_ADD(Issues.ExtensionDate, INTERVAL 14 DAY), (DATE_ADD(Issues.DateOfIssue, INTERVAL 56 DAY)))) as DaysLate
+		FROM Issues, Book
+		WHERE Issues.IssueID = '$issueId' AND Book.ISBN = Issues.ISBN
+
+	//the $dayslate here references 'DaysLate' from the above sql
+	//only run this if DaysLate is > 0
+
+		UPDATE StudentFaculty SET Penalty = Penalty + ($daysLate * .5) WHERE Username = $username
+
+	//now run this SQL to update IsDebarred if necessary
+
+		UPDATE StudentFaculty SET IsDebarred = 1 WHERE Username = '$username' AND Penalty >= 100
+
+	//update bookCopy and Issues. The $isDamaged value is coming from the employee input
+
+		UPDATE BookCopy, Issues
+		SET BookCopy.IsCheckedOut = 0, Issues.ReturnDate = CURDATE(), BookCopy.IsDamaged = $isDamaged
+		WHERE Issues.IssueId = $issueId AND Issues.ISBN = BookCopy.ISBN and Issues.CopyNum = BookCopy.CopyNum
+
+PENALTY CHARGES FOR LOST DAMAGED BOOK:
+
+	//grab last user from $isbn and $copyNum
+
+		SELECT UserName, DateOfIssue FROM Issues
+		WHERE ISBN = $isbn and CopyNum = $copyNum and IssueId LIKE 'C%'
+		ORDER BY DateOfIssue DESC
+		LIMIT 1
+
+	//Charge the account based on what the faculty enter as $penalty.
+	//The $username is the one grabbed in the pervious sql
+
+		UPDATE StudentFaculty SET Penalty = Penalty + $penalty WHERE Username = $username
+
+	//Check to see if user needs to be debarred
+
+		UPDATE StudentFaculty SET IsDebarred = 1 WHERE Username = $username AND Penalty >= 100
+
+DAMAGED BOOK REPORT:
+	
+	Months: Jan (Phys, Eng, Math)
+			Feb (Phys, Eng, Math)
+			March (Phys, Eng, History)
+
+	SELECT Book.Subject, COUNT(BookCopy.ISBN) AS damagedCount, MONTH(Issues.DateOfIssue) as Month
+	FROM Book NATURAL JOIN BookCopy NATURAL JOIN Issues
+	WHERE (Book.Subject = 'Physics' OR Book.Subject = 'English' OR Book.Subject = 'Math')
+	AND Book.ISBN = BookCopy.ISBN AND Book.ISBN = Issues.ISBN AND MONTH(Issues.DateOfIssue) = '01'
+	AND BookCopy.IsDamaged = 1
+	GROUP BY Book.Subject
+
+POPULAR BOOKS REPORT:
+
+	(SELECT MONTH(Issues.DateOfIssue) as Month, Book.Title, COUNT(Issues.IssueID) as NumberOfCheckouts
+	FROM Book, Issues
+	WHERE Book.ISBN = Issues.ISBN AND MONTH(Issues.DateOfIssue) = '01' AND Issues.IssueID LIKE 'C%'
+	GROUP BY Book.Title ORDER BY NumberOfCheckouts DESC LIMIT 3)
+	UNION ALL
+	(SELECT MONTH(Issues.DateOfIssue) as Month, Book.Title, COUNT(Issues.IssueID) as NumberOfCheckouts
+	FROM Book, Issues
+	WHERE Book.ISBN = Issues.ISBN AND MONTH(Issues.DateOfIssue) = '02' AND Issues.IssueID LIKE 'C%'
+	GROUP BY Book.Title ORDER BY NumberOfCheckouts DESC LIMIT 3)
+
+FREQUENT USER REPORT:
+
+	(SELECT MONTH(Issues.DateOfIssue) as Month, StudentFaculty.Name, COUNT(Issues.IssueID) as NumberOfCheckouts
+	FROM Issues, StudentFaculty
+	WHERE Issues.UserName = StudentFaculty.Username AND MONTH(Issues.DateOfIssue) = '01' AND Issues.IssueID LIKE 'C%'
+	GROUP BY StudentFaculty.Name
+	HAVING NumberOfCheckouts > 9
+	ORDER BY NumberOfCheckouts DESC LIMIT 5)
+	UNION ALL
+	(SELECT MONTH(Issues.DateOfIssue) as Month, StudentFaculty.Name, COUNT(Issues.IssueID) as NumberOfCheckouts
+	FROM Issues, StudentFaculty
+	WHERE Issues.UserName = StudentFaculty.Username AND MONTH(Issues.DateOfIssue) = '02' AND Issues.IssueID LIKE 'C%'
+	GROUP BY StudentFaculty.Name
+	HAVING NumberOfCheckouts > 9
+	ORDER BY NumberOfCheckouts DESC LIMIT 5)
+
+POPULAR SUBJECT REPORT:
+
+	(SELECT MONTH(Issues.DateOfIssue) AS Month, Book.Subject, COUNT(Issues.IssueID) as NumberOfCheckouts
+	FROM Issues, Book
+	WHERE Issues.ISBN = Book.ISBN and MONTH(Issues.DateOfIssue) = '01' AND Issues.IssueID LIKE 'C%'
+	GROUP BY Book.Subject ORDER BY NumberOfCheckouts DESC LIMIT 3)
+	UNION ALL
+	(SELECT MONTH(Issues.DateOfIssue) AS Month, Book.Subject, COUNT(Issues.IssueID) as NumberOfCheckouts
+	FROM Issues, Book
+	WHERE Issues.ISBN = Book.ISBN and MONTH(Issues.DateOfIssue) = '02' AND Issues.IssueID LIKE 'C%'
+	GROUP BY Book.Subject ORDER BY NumberOfCheckouts DESC LIMIT 3)
+
+UPDATE ON HOLD VALUE IN THE DATABASE:
+
+	UPDATE BookCopy
+	SET IsOnHold = 0
+	WHERE ISBN = $isbn and copyNum = $copyNum
+
+
