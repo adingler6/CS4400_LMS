@@ -43,7 +43,7 @@ class LmsMain(tk.Tk):
         try:
             global db
             db = pymysql.connect(host='academic-mysql.cc.gatech.edu',user='cs4400_Group_41',
-            db='cs4400_Group_41',passwd='YIBz9hoA')
+            db='********',passwd='******')
 
         except:
             messagebox.showwarning("Internet Connection Error!", "Please check your internet connection!")
